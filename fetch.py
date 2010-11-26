@@ -1,211 +1,312 @@
-#!/usr/bin/python
+#!/usr/bin/env python
+
 import oauth2 as oauth
+
+import logging
 import warnings
 warnings.simplefilter('ignore', DeprecationWarning)
-"""
-Saves your tweets to a local file
-"""
 
-import httplib2, urllib, time, sys, re
+import optparse
+import ConfigParser
+
+import httplib2
+import urllib
+import time
+import sys
+import re
+import pickle
+import os.path
+
 try:
     import json
 except ImportError:
     import simplejson as json
 
 
-# Valid options for TIMELINE or -m, and the corresponding endpoints at twitter.com/statuses/ and the local filenames we use.
-timelines = {
-    'user': {
-        'remote': 'user_timeline',
-        'local': 'my_tweets'
-    },
-    'friends': {
-        'remote': 'friends_timeline',
-        'local': 'my_friends_tweets'
-    }
-}
+class mytweets:
 
+    def __init__ (self, cfg):
 
-if '-k' in sys.argv and '-s' in sys.argv and '-o' in sys.argv and '-e' in sys.argv:
-    CONSUMER_KEY = sys.argv[sys.argv.index('-k')+1]
-    CONSUMER_SECRET = sys.argv[sys.argv.index('-s')+1]
-    ACCESS_TOKEN = sys.argv[sys.argv.index('-o')+1]
-    ACCESS_TOKEN_SECRET = sys.argv[sys.argv.index('-e')+1]
-else:
-    try:
-        from config import CONSUMER_KEY, CONSUMER_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET
-    except ImportError:
-        print "Keys and tokens not specified. Create a config.py file or use the -k, -s, -o and -e command line options"
-        sys.exit(1)
+        self.__cfg__ = cfg
 
+        # Valid options for TIMELINE or -m, and the corresponding endpoints
+        # at twitter.com/statuses/ and the local filenames we use.
 
-# Work out whether we're doing user_timeline or friends_timeline.
-TIMELINE = 'user'
-if '-m' in sys.argv:
-    TIMELINE = sys.argv[sys.argv.index('-m')+1]
-else:
-    try:
-        from config import TIMELINE
-    except ImportError:
-        pass
-try:
-    REMOTE_TIMELINE = "http://twitter.com/statuses/%s.json" % timelines[TIMELINE]['remote']
-except KeyError:
-    print "Invalid timeline: ", TIMELINE
-    sys.exit(1)
-FILE = timelines[TIMELINE]['local']
+        self.timelines = {
+            'user': {
+                'remote': 'user_timeline',
+                'local': 'my_tweets'
+                },
+            'friends': {
+                'remote': 'friends_timeline',
+                'local': 'my_friends_tweets'
+                }
+            }
 
+        _remote = self.timelines[ self.cfg('timeline') ]['remote']
+        _local = self.timelines[ self.cfg('timeline') ]['local']
 
-if '-t' in sys.argv:
-    FILE = "%s.txt" % FILE
-    import pickle
-    
-    def load_all():
-        try:
-            return pickle.load(open(FILE))
-        except IOError:
-            return []
-    
-    def write_all(tweets):
-        pickle.dump(tweets, open(FILE, 'w'))
-else:
-    FILE = "%s.json" % FILE
-    
-    def load_all():
-        try:
-            return json.load(open(FILE))
-        except IOError:
-            return []
-    
-    def write_all(tweets):
-        json.dump(tweets, open(FILE, 'w'), indent = 2)
+        if self.cfg('pickle') :
+            _local += '.txt'
+        else :
+            _local += '.json'
 
-if '-f' in sys.argv:
-    FILE_PATH = sys.argv[sys.argv.index('-f')+1]
-else:
-    try:
-        from config import FILE_PATH
-    except ImportError:
-        print "File_path not specified. Create a config.py file or use the -f command line options"
-        sys.exit(1)
-    
-FILE = FILE_PATH + FILE
-    
+        self.remote_timeline = "http://twitter.com/statuses/%s.json" % _remote
+        self.local_timeline = _local
 
-def normalize_url(url):
+    def cfg (self, key):
+
+        if not self.__cfg__.has_option('mytweets', key):
+            return False
+
+        return self.__cfg__.get('mytweets', key)
+
     # Simple length heuristic
-    if len(url) < 10: return None
 
-    # Make sure we have some sort of protocol
-    if not re.search('://', url):
-        url = 'http://' + url
+    def normalize_url(self, url):
 
-    return url
+        if len(url) < 10:
+            return None
 
-def lookup_short_urls(tweet):
-    # If short_urls are already there, skip
-    if 'short_urls' in tweet: return
+        # Make sure we have some sort of protocol
 
-    # (Start of line or word)
-    # (Maybe something like http://)
-    # (A vaguely domain-like section, at least one dot which is not a double dot)
-    # (Whatever else follows, liberally via non-whitespace)
-    url_regex = '(\A|\\b)([\w-]+://)?\S+[.][^\s.]\S*'
+        if not re.search('://', url):
+            url = 'http://' + url
 
-    redir = httplib2.Http(timeout=10)
-    redir.follow_redirects = False
-    redir.force_exception_to_status_code = True
+        return url
 
-    short_urls = {}
+    def lookup_short_urls(self, tweet):
 
-    new_text = tweet['text']
-    for sub in tweet['text'].split():
-        orig_url_match = re.search(url_regex, sub)
-        if not orig_url_match:
-            continue
-        orig_url = normalize_url(orig_url_match.group(0))
-        if not orig_url: continue
+        # If short_urls are already there, skip
+
+        if 'short_urls' in tweet:
+            return
+
+        # (Start of line or word)
+        # (Maybe something like http://)
+        # (A vaguely domain-like section, at least one dot which is not a double dot)
+        # (Whatever else follows, liberally via non-whitespace)
+
+        url_regex = '(\A|\\b)([\w-]+://)?\S+[.][^\s.]\S*'
+
+        redir = httplib2.Http(timeout=10)
+        redir.follow_redirects = False
+        redir.force_exception_to_status_code = True
+
+        short_urls = {}
+
+        new_text = tweet['text']
+
+        for sub in tweet['text'].split():
+            orig_url_match = re.search(url_regex, sub)
+
+            if not orig_url_match:
+                continue
+
+            orig_url = self.normalize_url(orig_url_match.group(0))
+
+            if not orig_url:
+                continue
+
+            logging.debug("expand %s" % orig_url)
+
+            try:
+                response = redir.request(orig_url)[0]
+
+                if 'status' in response and response['status'] == '301':
+                    short_urls[response['location']] = orig_url
+                    new_text = new_text.replace(orig_url, response['location'])
+            except:
+                logging.error("failed to expand %s: %s" % (orig_url, e))
+
+        tweet['short_urls'] = short_urls
+        tweet['text'] = new_text
+
+    def fetch_and_save_new_tweets(self):
+
+        tweets = self.load_all()
+
+        old_tweet_ids = set(t['id'] for t in tweets)
+
+        if tweets:
+            since_id = max(t['id'] for t in tweets)
+        else:
+            since_id = None
 
         try:
-            response = redir.request(orig_url)[0]
-            if 'status' in response and response['status'] == '301':
-                short_urls[response['location']] = orig_url
-                new_text = new_text.replace(orig_url, response['location'])
-        except:
-            pass
+            new_tweets = self.fetch_all(since_id)
+        except ValueError, msg:
+            logging.error("An error occurred while getting your tweets: ", msg)
+            return False
 
-    tweet['short_urls'] = short_urls
-    tweet['text'] = new_text
+        num_new_saved = 0
 
-def fetch_and_save_new_tweets():
-    tweets=load_all()
-    old_tweet_ids = set(t['id'] for t in tweets)
-    if tweets:
-        since_id = max(t['id'] for t in tweets)
-    else:
-        since_id = None
-    try:
-        new_tweets = fetch_all(since_id)
-    except ValueError, msg:
-        print "An error occurred while getting your tweets: ", msg
-        sys.exit(1)
-    num_new_saved = 0
-    for tweet in new_tweets:
-        if tweet['id'] not in old_tweet_ids:
-            tweets.append(tweet)
-            num_new_saved += 1
-    tweets.sort(key = lambda t: t['id'], reverse=True)
-    # Delete the 'user' key (unless this is the friends' timeline), lookup short URLs
-    for t in tweets:
-        if TIMELINE == 'user' and 'user' in t:
-            del t['user']
-        lookup_short_urls(t)
-    # Save back to disk
-    write_all(tweets)
-    print "Saved %s new tweets" % num_new_saved
+        for tweet in new_tweets:
 
-def fetch_all(since_id = None):
-    all_tweets = []
-    seen_ids = set()
-    page = 0
-    args = {'count': 200}
-    if since_id is not None:
-        args['since_id'] = since_id
+            if tweet['id'] not in old_tweet_ids:
+                tweets.append(tweet)
+                num_new_saved += 1
 
-    all_tweets_len = len(all_tweets)
+            tweets.sort(key = lambda t: t['id'], reverse=True)
 
-    while True:
-        args['page'] = page
+        logging.info("There are %s new Twitter messages" % num_new_saved)
 
-        # Via http://blog.yjl.im/2010/04/first-step-to-twitter-oauth-streaming.html
-        consumer = oauth.Consumer(key=CONSUMER_KEY, secret=CONSUMER_SECRET)
-        token = oauth.Token(key=ACCESS_TOKEN, secret=ACCESS_TOKEN_SECRET)
-        client = oauth.Client(consumer, token)
-        resp, content = client.request("%s?%s" % (REMOTE_TIMELINE, urllib.urlencode(args)), 'GET')
+        # Delete the 'user' key (unless this is the friends' timeline),
+        # lookup short URLs
 
-        if resp['status'] == '502':
-            # This usually seems to mean the request has timed out, but if we try again
-            # the result has been cached and will work second time round.
-            time.sleep(2)
-            resp, content = client.request("%s?%s" % (REMOTE_TIMELINE, urllib.urlencode(args)), 'GET')
+        for t in tweets:
 
-        page += 1
-        tweets = json.loads(content)
-        if 'error' in tweets:
-            raise ValueError, tweets['error']
-        if not tweets:
-            break
-        for tweet in tweets:
-            if tweet['id'] not in seen_ids:
-                seen_ids.add(tweet['id'])
-                all_tweets.append(tweet)
+            if self.cfg('timeline') == 'user' and 'user' in t:
+                del t['user']
+
+            self.lookup_short_urls(t)
+
+        print len(tweets)
+
+        # Save back to disk
+        self.write_all(tweets)
+        return True
+
+    def fetch_all(self, since_id = None):
+
+        all_tweets = []
+        seen_ids = set()
+        page = 0
+
+        args = {'count': 200}
+
+        if since_id is not None:
+            args['since_id'] = since_id
+
         all_tweets_len = len(all_tweets)
-        time.sleep(2)
 
-    all_tweets.sort(key = lambda t: t['id'], reverse=True)
-    return all_tweets
+        while True:
 
+            logging.debug("fetch page %s" % page)
+            args['page'] = page
 
+            # Via http://blog.yjl.im/2010/04/first-step-to-twitter-oauth-streaming.html
+
+            consumer = oauth.Consumer(key=self.cfg('consumer_key'), secret=self.cfg('consumer_secret'))
+            token = oauth.Token(key=self.cfg('access_token'), secret=self.cfg('access_token_secret'))
+            client = oauth.Client(consumer, token)
+
+            try:
+
+                resp, content = client.request("%s?%s" % (self.remote_timeline, urllib.urlencode(args)), 'GET')
+                logging.info(resp)
+
+                # This usually seems to mean the request has timed out, but if we try again
+                # the result has been cached and will work second time round.
+
+                if resp['status'] == '502':
+                    logging.warning("Twitter returned 502, sleeping for 2 seconds")
+                    time.sleep(2)
+                    resp, content = client.request("%s?%s" % (self.remote_timeline, urllib.urlencode(args)), 'GET')
+
+            except Exception, e:
+                logging.error("Aborting! HTTP request failed completely: %s" % e)
+                break
+
+            page += 1
+
+            try:
+                tweets = json.loads(content)
+            except Exception, e:
+                logging.error("JSON parsing failed: %s" % e)
+                break
+
+            if 'error' in tweets:
+                logging.error("Twitter says NO: %s" % tweets['error'])
+                break
+
+            if not tweets:
+                logging.debug("No tweets, stop looking")
+                break
+
+            for tweet in tweets:
+
+                if tweet['id'] not in seen_ids:
+                    seen_ids.add(tweet['id'])
+                    all_tweets.append(tweet)
+                    all_tweets_len = len(all_tweets)
+
+            logging.debug("pause so as not to make Baby Twitter cry")
+            time.sleep(2)
+
+        all_tweets.sort(key = lambda t: t['id'], reverse=True)
+        return all_tweets
+
+    def load_all(self) :
+
+        # TODO: check to see if we need to read files from YMD dirs
+
+        file = self.local_timeline
+
+        if not os.path.exists(file):
+            return []
+
+        fh = open(file, 'r')
+
+        if self.cfg('pickle'):
+            all = pickle.load(fh)
+        else:
+            all = json.load(fh)
+
+        return all
+
+    def write_all(self, tweets):
+
+        # TODO: check to see if we need to write files to YMD dirs
+
+        file = self.local_timeline
+        fh = open(file, 'w')
+
+        if self.cfg('pickle'):
+            pickle.dump(tweets, fh)
+        else :
+            json.dump(tweets, fh, indent = 2)
+
+        fh.close()
 
 if __name__ == '__main__':
-    fetch_and_save_new_tweets()
+
+    parser = optparse.OptionParser()
+    parser.add_option("-c", "--config", dest="config", default=None, help="")
+    parser.add_option("-k", "--consumer-key", dest="consumer_key", default=None, help="")
+    parser.add_option("-s", "--consumer-secret", dest="consumer_key", default=None, help="")
+    parser.add_option("-o", "--access-token", dest="access_token", default=None, help="")
+    parser.add_option("-e", "--access-token-secret", dest="access_token_secret", default=None, help="")
+    parser.add_option("-m", "--timeline", dest="timeline", default="user", help="")
+    parser.add_option("-t", "--as-text", dest="pickle", default=False, help="")
+    parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False, help="")
+
+    # TODO: allow for custom file name and/or custom YMD directory in which to store individual tweets
+
+    (opts, args) = parser.parse_args()
+
+    if opts.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+    if opts.config:
+        cfg = ConfigParser.ConfigParser()
+        cfg.read(opts.config)
+
+    # TODO: check for config.py here
+
+    else:
+        cfg = ConfigParser.ConfigParser()
+        cfg.add_section('mytweets')
+
+    # fill in the blanks
+
+    for k, v in vars(opts).items():
+        if v and not cfg.has_option('mytweets', k):
+            cfg.set('mytweets', k, v)
+
+    # TODO: ensure various parameters here
+
+    tw = mytweets(cfg)
+    tw.fetch_and_save_new_tweets()
