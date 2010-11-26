@@ -161,10 +161,9 @@ class mytweets:
 
             self.lookup_short_urls(t)
 
-        print len(tweets)
-
         # Save back to disk
         self.write_all(tweets)
+
         return True
 
     def fetch_all(self, since_id = None):
