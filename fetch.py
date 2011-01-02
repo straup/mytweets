@@ -15,6 +15,7 @@ import time
 import sys
 import re
 import pickle
+import os
 import os.path
 
 try:
@@ -33,14 +34,17 @@ class mytweets:
         # at twitter.com/statuses/ and the local filenames we use.
 
         self.timelines = {
+
             'user': {
                 'remote': 'user_timeline',
                 'local': 'my_tweets'
                 },
+
             'friends': {
                 'remote': 'friends_timeline',
                 'local': 'my_friends_tweets'
                 }
+
             }
 
         _remote = self.timelines[ self.cfg('timeline') ]['remote']
@@ -257,6 +261,29 @@ class mytweets:
     def write_all(self, tweets):
 
         # TODO: check to see if we need to write files to YMD dirs
+
+        for tweet in tweets:
+
+            """
+            id = tweet['id']
+
+            # Thu Dec 23 05:54:42 +0000 2010
+            created = tweet['created_at']
+            fmt = '%a %b %d %H:%M:%S +0000 %Y'
+
+            dt = time.strptime(created, fmt)
+            ymd = time.strftime("%Y/%m/%d", dt)
+
+            tweet_dirname = "/home/asc/test/%s" % ymd
+            tweet_basename = "%s/%s.json" % (tweet_dirname, tweet['id'])
+
+            if not os.path.exists(tweet_dirname):
+                os.makedirs(tweet_dirname)
+
+            fh = open(tweet_basename, 'w')
+            json.dump(tweets, fh, indent = 2)
+            fh.close()
+            """
 
         file = self.local_timeline
         fh = open(file, 'w')
