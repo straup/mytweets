@@ -165,6 +165,8 @@ class mytweets:
 
             self.lookup_short_urls(t)
 
+        logging.info("writing stuff back to disk...")
+
         # Save back to disk
         self.write_all(tweets)
 
@@ -242,7 +244,10 @@ class mytweets:
 
     def load_all(self) :
 
-        # TODO: check to see if we need to read files from YMD dirs
+        """
+        if self.cfg('backup_ymd'):
+            return self.load_all_files()
+        """
 
         file = self.local_timeline
 
@@ -258,32 +263,16 @@ class mytweets:
 
         return all
 
+    def load_all_files(self):
+
+        backup_dir = self.cfg('backup_dir')
+
+        # os.walk here...
+
     def write_all(self, tweets):
 
-        # TODO: check to see if we need to write files to YMD dirs
-
-        for tweet in tweets:
-
-            """
-            id = tweet['id']
-
-            # Thu Dec 23 05:54:42 +0000 2010
-            created = tweet['created_at']
-            fmt = '%a %b %d %H:%M:%S +0000 %Y'
-
-            dt = time.strptime(created, fmt)
-            ymd = time.strftime("%Y/%m/%d", dt)
-
-            tweet_dirname = "/home/asc/test/%s" % ymd
-            tweet_basename = "%s/%s.json" % (tweet_dirname, tweet['id'])
-
-            if not os.path.exists(tweet_dirname):
-                os.makedirs(tweet_dirname)
-
-            fh = open(tweet_basename, 'w')
-            json.dump(tweets, fh, indent = 2)
-            fh.close()
-            """
+        if self.cfg('backup_ymd'):
+            return self.write_all_files(tweets)
 
         file = self.local_timeline
         fh = open(file, 'w')
@@ -294,6 +283,36 @@ class mytweets:
             json.dump(tweets, fh, indent = 2)
 
         fh.close()
+        return
+
+    def write_all_files(self, tweets):
+
+        backup_dir = self.cfg('backup_dir')
+
+        for tweet in tweets:
+
+            id = tweet['id']
+
+            # Thu Dec 23 05:54:42 +0000 2010
+            created = tweet['created_at']
+            fmt = '%a %b %d %H:%M:%S +0000 %Y'
+
+            dt = time.strptime(created, fmt)
+            ymd = time.strftime("%Y/%m/%d", dt)
+
+            tweet_dirname = os.path.join(backup_dir, ymd)
+            tweet_basename = "%s/%s.json" % (tweet_dirname, tweet['id'])
+
+            if not os.path.exists(tweet_dirname):
+                os.makedirs(tweet_dirname)
+
+            logging.info("write %s" % tweet_basename)
+
+            fh = open(tweet_basename, 'w')
+            json.dump(tweet, fh, indent = 2)
+            fh.close()
+            
+        return
 
 if __name__ == '__main__':
 
